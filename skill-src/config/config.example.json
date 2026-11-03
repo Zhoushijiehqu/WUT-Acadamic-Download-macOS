@@ -1,0 +1,20 @@
+{
+  "_readme": "OA 下载与核验配置，不放账号密码。邮箱用于需要联系邮箱的 OA 来源；未填写时跳过对应来源。",
+  "email": "",
+  "download_dir": "papers",
+  "chinese_doi_prefixes": [
+    "10.16383",
+    "10.19721",
+    "10.15918",
+    "10.3969"
+  ],
+  "sources": [
+    "openalex",
+    "crossref",
+    "semanticscholar",
+    "arxiv"
+  ],
+  "request_interval_seconds": 1.0,
+  "max_pdf_mb": 120,
+  "timeout_seconds": 30
+}

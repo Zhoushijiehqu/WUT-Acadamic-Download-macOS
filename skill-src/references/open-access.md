@@ -1,0 +1,46 @@
+# OA 解析、下载与本地核验
+
+脚本使用原包的 Unpaywall、OpenAlex、Crossref、Semantic Scholar、arXiv 和 Europe PMC 链路。本轮测试使用离线响应，不证明当前接口可达、额度、价格或服务政策。
+
+| 来源 | 脚本使用的证据 |
+|---|---|
+| Unpaywall | 用户配置真实邮箱后查询 `best_oa_location` / `oa_locations`；不配置邮箱则跳过这一路 |
+| OpenAlex | `best_oa_location.pdf_url`、`landing_page_url`；普通 `locations` 仅选 `is_oa:true` |
+| Semantic Scholar | `openAccessPdf.url`；保留版本/许可未知状态 |
+| Crossref | 题名、DOI、作者等元数据，存在 PDF 链接不代表开放许可 |
+| arXiv | 用户给定或元数据返回的有效 arXiv 编号；保留版本号，文件记为预印本 |
+| Europe PMC | 匹配标识且 `isOpenAccess=Y` 的条目；有 PMCID 不自动证明 OA |
+
+DOAJ、CORE、DataCite、bioRxiv 等不是当前脚本已实现的完整下载链路，不应写成自动支持。需扩展时查服务当前官方文档；不要自动为用户申请 key、邮箱或付费额度。
+
+## 中文 DOI
+
+`10.16383/*`（自动化学报等）、`10.19721/*`、`10.15918/*`、`10.3969/*` 等中文 DOI 常不被 Crossref/OpenAlex/Semantic Scholar 收录，直接查会 404。`paper_oa.py` 对前缀命中的 DOI 先走 `https://www.chndoi.org/Resolution/Handler?doi=...` 跟随重定向拿落地页，失败再回退 `https://doi.org/<doi>`；从落地页 HTML 通用提取 `citation_pdf_url`、`.pdf`、`/pdf/`、含“全文/下载”的链接（过滤图片、js、css、mailto 等），作为机构/OA 位置。找不到落地页时返回 `source_unavailable` 并附中文提示，不伪造期刊官网 URL；可把新前缀加到 `config.chinese_doi_prefixes`。真实 chndoi 链路与期刊页提取命中率需现场复核。
+
+## 批处理与退出码
+
+`batch` 默认 3 并发（`--workers 1` 串行），支持 `--resume`、`--state <out>/batch-state.jsonl`；每篇结果追加状态行（identifier/status/path/error/timestamp），中断后可续跑；同 host 请求用全局锁限速。退出码统一：`0` 成功/已保存、`1` 参数或配置错误、`2` 需要用户/无合法 OA、`3` 部分完成/待核验/下载失败。
+
+## 失败判断
+
+- 一次来源失败不等于论文不存在。`source_unavailable` 表示至少部分来源错误，未定位到全文时结论不完整。
+- `no_oa` 只表示当前链路未定位到，不保证全网无 OA；可以在学校授权下下载或找作者合法版本。
+- PDF 响应是 HTML/验证码/登录页时不保存为成功 PDF；遇 403 或验证切换到用户浏览器，不变换身份硬试。
+- `fetch URL` 是用户给定位置下载，许可与篇目仍待证明；本轮删除了从普通网页里任取 `.pdf` 超链接的逻辑，避免下载参考文献 PDF，只跟 `citation_pdf_url` / PDF 类型链接。
+- 文件大小上限适用于初始和二级元数据 PDF 地址；超限报失败，不截断后保存。
+
+## 核验、去重与索引
+
+初筛检查 `%PDF-` 和尾部 `%%EOF`，再由可选 `pypdf` 解析页树并从前两页提取文本。完整题名匹配且所给 DOI 匹配时记自动篇目匹配；只有 DOI 出现在参考文献中不足以确认。未给 DOI 时题名匹配可核验，但仍需注意版本。
+
+没有 pypdf、加密 PDF、损坏 PDF、扫描件、公式导致题名变化等应保留明确原因；扫描件和题名变化可能需要人工看首页，不能反复重下解决。只有一页的文件会额外标记 `single_page_confirm_full_text`，即使题名匹配也先待核验，避免把摘要或预览当成全文。加密文件转人工检查，不直接当作坏文件。严格解析可能拒绝浏览器仍能打开的非标准 PDF；这类文件可人工检查，不自动修改原文件。自动检查不覆盖全部流内容、勘误关系或版权许可。
+
+清单去重先检查文件仍存在、可解析且 SHA-256 与记录一致，不因有一条旧记录就跳过下载。新记录使用绝对路径，旧相对路径会尝试按清单所在目录及其父目录解析；搬迁目录后绝对路径仍需修正或重新登记。
+
+浏览器和人工文件用 `paper_oa.py import-file` 核验并登记；同目录原件不重复复制，其他目录文件复制后保留原件。后续登记追加新记录，`organize` 对同一路径采用最后一条记录，CSV 含状态，缺文件返回非零。`organize` 不扫描未登记的文件。
+
+## 限速与日志
+
+下载顺序执行；批量无论成功失败都留间隔。API 时限、退避和配额以服务当前要求为准；arXiv 请求至少间隔 3 秒。脚本配置的通用间隔不是全部服务规则的替代品。
+
+清单保存来源落地页、DOI、版本、许可、哈希和验证证据；签名 CDN query 不持久化。许可未知留空，`bronze` 或可以免费阅读也不能自动视为开放再分发许可。不要把已下载的受版权全文自动上传到共享空间。
